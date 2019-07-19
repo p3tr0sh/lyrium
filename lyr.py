@@ -63,6 +63,7 @@ def match_after(expr, target):
     return re.search(expr, target, re.MULTILINE)[0]
 
 def out(text):
+    # transpose
     def trans(matchobject):
         chord = matchobject[0].replace("[", "").replace("]", "")
         return "[" + str(Chord(chord).transpose(key_shift)) + "]"
@@ -71,11 +72,17 @@ def out(text):
             text = re.sub(r"\[\w+\]", trans, text)
     elif not args.original:
         text = re.sub(r"\[\w+\]", "", text)
+
+
     ischord = False
     output = ""
     chordline = ""
     lyrline = ""
     chordlength = 0
+    color = ["",""]
+    if not args.no_color:
+        color[0] = "\033[1;35m"
+        color[1] = "\033[0;0m"
     for line in text.splitlines():
         for c in line:
             if c == "[":
@@ -100,7 +107,7 @@ def out(text):
                         chordlength -= 1
                 lyrline += c
         if chordline.rstrip() != "":
-            output += "\033[1;35m" + chordline + "\033[0;0m\n"
+            output += color[0] + chordline + color[1] + "\n"
         if not (chordline.rstrip() != "" and lyrline.rstrip() == ""):
             output += lyrline + "\n"
         chordline = ""
