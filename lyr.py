@@ -55,6 +55,7 @@ key_group.add_argument("-o", "--original", action="store_true")
 key_group.add_argument("-t", "--transposed", action="store_true")
 key_group.add_argument("-T", "--transpose", type=int, help="shift in half tone steps") #TODO: accept another key instead of shift
 parser.add_argument("-C", "--no-color", action="store_true", help="disable color output of chords")
+parser.add_argument("-s", "--sheet", action="store_true", help="only print the sheet")
 
 args = parser.parse_args()
 
@@ -63,26 +64,20 @@ def match_after(expr, target):
     return re.search(expr, target, re.MULTILINE)[0]
 
 def out(text):
-    # transpose
-    def trans(matchobject):
-        chord = matchobject[0].replace("[", "").replace("]", "")
-        return "[" + str(Chord(chord).transpose(key_shift)) + "]"
-    if args.transpose or args.transposed is not None:
-        if key_shift != 0:
-            text = re.sub(r"\[\w+\]", trans, text)
-    elif not args.original:
-        text = re.sub(r"\[\w+\]", "", text)
-
-
+    
     ischord = False
     output = ""
     chordline = ""
     lyrline = ""
     chordlength = 0
+
+    # color option
     color = ["",""]
     if not args.no_color:
         color[0] = "\033[1;35m"
         color[1] = "\033[0;0m"
+
+    
     for line in text.splitlines():
         for c in line:
             if c == "[":
@@ -113,7 +108,46 @@ def out(text):
         chordline = ""
         lyrline = ""
         chordlength = 0
-    print(output)
+    return output
+
+
+# sheet mode
+def sheet(text):
+
+    parts = []
+    for line in text.splitlines():
+        if len(line) == 0:
+            continue
+        if line[0] == '>':
+            parts.append(line[2:].split(" | "))
+            parts[-1].append([])
+        elif not args.sheet:
+            for o in out(line)[:-1].split('\n'):
+                parts[-1][-1].append(o)
+    width1 = max([len(x[0]) for x in parts])
+    width2 = max([len(x[1]) for x in parts])
+
+    # color option
+    color = ["",""]
+    if not args.no_color:
+        color[0] = "\033[2m"
+        color[1] = "\033[0;0m"
+
+    output = ""
+    for p in parts:
+        output += "{:{w1}s} | {:>{w2}s} | ".format(p[0],p[1],w1=width1,w2=width2)
+        if type(p[2]) is str:
+            output += "{}{}{}\n".format(color[0],p[2],color[1])
+        else:
+            try:
+                output += "{}\n".format(p[-1].pop(0))
+            except IndexError:
+                output += "\n"
+        
+        for x in p[-1]:
+            output += "{:{w1}s} | {:>{w2}s} | {}\n".format("","",x,w1=width1,w2=width2)
+    return output
+            
 
 with open(expanduser(args.file), "r") as textfile:
     text = textfile.readlines()
@@ -140,4 +174,19 @@ with open(expanduser(args.file), "r") as textfile:
         key_shift = 0
         key = str(key)
     print("{} - {} ({})".format(title, artist, key))
-    out(body)
+
+    # transpose
+    def trans(matchobject):
+        chord = matchobject[0].replace("[", "").replace("]", "")
+        return "[" + str(Chord(chord).transpose(key_shift)) + "]"
+    if args.transpose or args.transposed is not None:
+        if key_shift != 0:
+            body = re.sub(r"\[\w+\]", trans, body)
+    elif not args.original:
+        body = re.sub(r"\[\w+\]", "", body)
+
+
+    if '>' in body:
+        print(sheet(body),end='')
+    else:
+        print(out(body))
