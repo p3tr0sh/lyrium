@@ -4,7 +4,10 @@ from lxml import html
 import argparse
 import requests
 from os.path import expanduser
+from os import remove
 import re
+
+import subprocess
 
 # parse md files
 # 1. line: # Title
@@ -51,13 +54,18 @@ key_shift = 0
 parser = argparse.ArgumentParser()
 parser.add_argument("file")
 key_group = parser.add_mutually_exclusive_group()
-key_group.add_argument("-o", "--original", action="store_true")
+key_group.add_argument("-n", "--no-chords", action="store_true")
 key_group.add_argument("-t", "--transposed", action="store_true")
 key_group.add_argument("-T", "--transpose", type=int, help="shift in half tone steps") #TODO: accept another key instead of shift
 parser.add_argument("-C", "--no-color", action="store_true", help="disable color output of chords")
 parser.add_argument("-s", "--sheet", action="store_true", help="only print the sheet")
+parser.add_argument("-p", "--pdf", action="store_true", help="instead of printing to stdout, create pdf file")
+parser.add_argument("-l", "--lyrics", action="store_true", help="only print the lyrics")
 
 args = parser.parse_args()
+
+if args.pdf:
+    args.no_color = True
 
 
 def match_after(expr, target):
@@ -101,7 +109,7 @@ def out(text):
                     else:
                         chordlength -= 1
                 lyrline += c
-        if chordline.rstrip() != "":
+        if chordline.rstrip() != "" and not args.lyrics:
             output += color[0] + chordline + color[1] + "\n"
         if not (chordline.rstrip() != "" and lyrline.rstrip() == ""):
             output += lyrline + "\n"
@@ -119,7 +127,7 @@ def sheet(text):
         if len(line) == 0:
             continue
         if line[0] == '>':
-            parts.append(line[2:].split(" | "))
+            parts.append(line[2:].split(" ; ")) # split on ; to allow chord progression with '|'
             parts[-1].append([])
         elif not args.sheet:
             for o in out(line)[:-1].split('\n'):
@@ -147,12 +155,71 @@ def sheet(text):
         for x in p[-1]:
             output += "{:{w1}s} | {:>{w2}s} | {}\n".format("","",x,w1=width1,w2=width2)
     return output
-            
+
+def pdf(body,title,artist,key):
+    tex = "\\documentclass[notitlepage,14pt]{extarticle}\n"
+    tex += "\\usepackage[a4paper,margin=0.8in]{geometry}\n"
+    tex += "\\usepackage{fontspec}\n"
+    tex += "\\usepackage{tabularx}\n"
+    tex += "\\usepackage{array}\n"
+    tex += "\\setmainfont[Ligatures=TeX]{MuseJazzText}\n"
+    tex += "\\newcommand\\textbox[2]{\\parbox{#1\\textwidth}{#2}}\n"
+    tex += "\\newcolumntype{C}{>{\\centering\\arraybackslash}X}\n"
+    tex += "\\pagenumbering{gobble}\n"
+    tex += "\\begin{document}\n"
+    #tex += "\\textbox{.25}{\\hfill}\\textbox{.5}{\\Huge \\centering " + title + " \\Large (" + key + ")\\hfill} \\large \\textbox{.25}{\\hfill " + artist + "} \\large \n\n"
+    tex += "\\begin{tabularx}{\\textwidth}{C r}\\Huge " + title + " \\Large (" + key + ") & \\large " + artist + "\\end{tabularx}\n\n"
+    tex += "\\vspace{1em}\n"
+    print(tex)
+    tex += "\\renewcommand{\\arraystretch}{1.5}\n"
+    tex += "\\setlength{\\extrarowheight}{1.5em}\n"
+    tex += "\\begin{tabularx}{\\textwidth}{l r| l@{\\hspace{1em}}X}\n"
+    lyrics = ""
+    for line in body.splitlines():
+        if len(line) == 0:
+            lyrics += '\n'
+            continue
+        if line[0] == '>':
+            #tex += "\\\\[-1em] \\hline \\\\[-1em]\n"
+            tex += "\\hline\n\\large "
+            #tex += "\\\\[-.6em]\n"
+            l = [*line[2:].replace('#',"\\#").replace('&','\\&').split(' ; '),'','']
+            if "|" in l[2]:
+                l[2] = l[2].replace('[','').replace(']','').replace('  ','\\enspace\\enspace')
+                tex += "{} & {} & {} & {} \\\\".format(*l)
+                continue
+            elif len(l) > 3 and "|" in l[3]: # chord progression in middle column
+                l[3] = l[3].replace('[','').replace(']','').replace('  ','\\enspace\\enspace')
+                # tex += "{0:} & {1:} & {3:} & {2:} \\\\".format(*l)
+                # continue
+            tex += "{0:} & {1:} & {3:} & {2:} \\\\".format(*l)
+        else:
+            lyrics += line + '\n'
+
+    tex += "\\hline\n"
+    tex += "\\end{tabularx}\n"
+    tex += "\\renewcommand{\\arraystretch}{1}\n"
+    if not args.sheet:
+        #tex += "\\pagebreak\n"
+        tex += "\\normalsize\\begin{verbatim}\n"
+        tex += out(lyrics)
+        tex += "\\end{verbatim}\n"
+    tex += "\\end{document}\n"
+    basename = args.file.rsplit('.',1)[0]
+    with open("{}.tex".format(basename),'w') as texfile:
+        texfile.write(tex)
+    #remove("{}.pdf".format(basename))
+    o = subprocess.call("xelatex {}.tex".format(basename),shell=True)
+    if o != 0:
+        return
+    # cleanup
+    for i in ["tex","aux","log"]:
+        remove("{}.{}".format(basename,i))
 
 with open(expanduser(args.file), "r") as textfile:
     text = textfile.readlines()
     body = "".join(text[text.index("---\n")+1:])
-    text = "".join(text)
+    text = "".join(text[:text.index("---\n")])
     title = match_after("(?<=^# ).*", text)
     artist = match_after("(?<=^## ).*", text)
     key = match_after("(?<=^### ).*", text)
@@ -165,28 +232,30 @@ with open(expanduser(args.file), "r") as textfile:
         key = Chord(key.split("-")[0].strip())
     else:
         key = Chord(key)
-    
     if args.transpose is not None:
         key_shift = args.transpose
-    if not args.original:
-        key = str(key.transpose(key_shift))
+    if not args.no_chords and key_shift != 0:
+        key_str = str(key)
+        key = '{} + {} = {}'.format(key_str,key_shift,key.transpose(key_shift))
     else:
         key_shift = 0
         key = str(key)
     print("{} - {} ({})".format(title, artist, key))
+    
 
     # transpose
     def trans(matchobject):
         chord = matchobject[0].replace("[", "").replace("]", "")
         return "[" + str(Chord(chord).transpose(key_shift)) + "]"
-    if args.transpose or args.transposed is not None:
+    if args.transpose is not None or args.transposed:
         if key_shift != 0:
             body = re.sub(r"\[\w+\]", trans, body)
-    elif not args.original:
+    elif args.no_chords:
         body = re.sub(r"\[\w+\]", "", body)
 
-
-    if '>' in body:
+    if args.pdf:
+        pdf(body,title,artist,key)
+    elif '>' in body:
         print(sheet(body),end='')
     else:
         print(out(body))
