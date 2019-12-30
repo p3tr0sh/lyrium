@@ -4,7 +4,7 @@ from lxml import html
 import argparse
 import requests
 from os.path import expanduser
-from os import remove
+from os import remove,get_terminal_size
 import re
 
 import subprocess
@@ -79,6 +79,9 @@ def out(text):
     lyrline = ""
     chordlength = 0
 
+    linecount = 0
+    parts_start_at = [] # collect line numbers of empty lines for possible split points
+
     # color option
     color = ["",""]
     if not args.no_color:
@@ -87,7 +90,7 @@ def out(text):
 
     
     for line in text.splitlines():
-        for c in line:
+        for c in line: # look for chords and separate them into additional lines
             if c == "[":
                 ischord = True
             elif c == "]":
@@ -109,13 +112,48 @@ def out(text):
                     else:
                         chordlength -= 1
                 lyrline += c
+
+        if line == '':
+            parts_start_at.append(linecount)
         if chordline.rstrip() != "" and not args.lyrics:
             output += color[0] + chordline + color[1] + "\n"
+            linecount += 1
         if not (chordline.rstrip() != "" and lyrline.rstrip() == ""):
             output += lyrline + "\n"
+            linecount += 1
         chordline = ""
         lyrline = ""
         chordlength = 0
+
+    # wrap text if in terminal mode and more than $lines have to be printed
+    colwidth = int(get_terminal_size()[0]/2)
+    if linecount + 3 > get_terminal_size()[1] and not args.pdf:
+        # find the right spot to split into columns
+        idx = linecount
+        for part in parts_start_at:
+            if part > linecount/2:
+                idx = part
+                break
+
+        # split
+        splitted = output.split('\n')
+        left = splitted[:idx]
+        right = splitted[idx:]
+
+        # append empty strings to the shorter list
+        if len(left) > len(right):
+            right += ['']*(len(left)-len(right))
+        else:
+            left += ['']*(len(right)-len(left))
+        output_2 = ""
+
+        # build string
+        for x,y in zip(left,right):
+            offset = 0 # coloring lines yields a negative offset to the line width, which has to be countered
+            if color[0] in x:
+                offset = len(color[0]) + len(color[1])
+            output_2 += "{:{wid}s}|  {}\n".format(x,y,wid=colwidth+offset)
+        return output_2
     return output
 
 
