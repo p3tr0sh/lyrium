@@ -29,8 +29,8 @@ class Chord:
         if symbol[0] == "H":
             symbol[0] = "B"
         if len(symbol) >= 2 and (symbol[:2] in Chord.SHARP or symbol[:2] in Chord.FLAT): #TODO: zu ungenau, basston
-                self.base = symbol[:2]
-                self.addition = symbol[2:]
+            self.base = symbol[:2]
+            self.addition = symbol[2:]
         else:
             self.base = symbol[0]
             self.addition = symbol[1:]
@@ -41,7 +41,8 @@ class Chord:
         idx = Chord.FLAT.index(self.base) if self.base in Chord.FLAT else Chord.SHARP.index(self.base)
         if amount < 0:
             self.base = Chord.FLAT[(idx + amount) % 12]
-        self.base = Chord.SHARP[(idx + amount) % 12]
+        else:
+            self.base = Chord.SHARP[(idx + amount) % 12]
         return self
     
     def __str__(self):
@@ -287,9 +288,9 @@ with open(expanduser(args.file), "r") as textfile:
         return "[" + str(Chord(chord).transpose(key_shift)) + "]"
     if args.transpose is not None or args.transposed:
         if key_shift != 0:
-            body = re.sub(r"\[\w+\]", trans, body)
+            body = re.sub(r"\[[a-zA-Z0-9#]+\]", trans, body)
     elif args.no_chords:
-        body = re.sub(r"\[\w+\]", "", body)
+        body = re.sub(r"\[[a-zA-Z0-9#]+\]", "", body)
 
     if args.pdf:
         pdf(body,title,artist,key)
