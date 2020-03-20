@@ -38,17 +38,30 @@ class Chord:
     def transpose(self, amount):
         if amount == 0:
             return self
-        idx = Chord.FLAT.index(self.base) if self.base in Chord.FLAT else Chord.SHARP.index(self.base)
+        idx = Chord.index(self.base)
         if amount < 0:
             self.base = Chord.FLAT[(idx + amount) % 12]
+            if '/' in self.addition:
+                left, right = self.addition.split('/',1)
+                self.addition = '{}/{}'.format(left,str(Chord(right).transpose(amount)))
         else:
             self.base = Chord.SHARP[(idx + amount) % 12]
+            if '/' in self.addition:
+                left, right = self.addition.split('/',1)
+                self.addition = '{}/{}'.format(left,str(Chord(right).transpose(amount)))
         return self
+
+    def index(symbol):
+        return Chord.FLAT.index(symbol) if symbol in Chord.FLAT else Chord.SHARP.index(symbol)
     
     def __str__(self):
         s = self.base if self.third else self.base.lower()
         return s + self.addition
 
+    def distance(self, symbol): # TODO: only upwards shift compatible
+        idx = Chord.index(self.base)
+        idx_symbol = Chord.index(symbol)
+        return (idx_symbol - idx) % 12
 
 key_shift = 0
 
@@ -57,7 +70,7 @@ parser.add_argument("file")
 key_group = parser.add_mutually_exclusive_group()
 key_group.add_argument("-n", "--no-chords", action="store_true")
 key_group.add_argument("-t", "--transposed", action="store_true")
-key_group.add_argument("-T", "--transpose", type=int, help="shift in half tone steps") #TODO: accept another key instead of shift
+key_group.add_argument("-T", "--transpose", help="shift in half tone steps or to another key")
 parser.add_argument("-C", "--no-color", action="store_true", help="disable color output of chords")
 parser.add_argument("-s", "--sheet", action="store_true", help="only print the sheet")
 parser.add_argument("-p", "--pdf", action="store_true", help="instead of printing to stdout, create pdf file")
@@ -91,28 +104,31 @@ def out(text):
 
     
     for line in text.splitlines():
-        for c in line: # look for chords and separate them into additional lines
-            if c == "[":
-                ischord = True
-            elif c == "]":
-                ischord = False
-                chordline += " "
-                chordlength += 1
-            elif ischord:
-                chordline += c
-                chordlength += 1
-            else:
-                if chordlength == 0:
+        if not line.startswith('|'):
+            for c in line: # look for chords and separate them into additional lines
+                if c == "[":
+                    ischord = True
+                elif c == "]":
+                    ischord = False
                     chordline += " "
+                    chordlength += 1
+                elif ischord:
+                    chordline += c
+                    chordlength += 1
                 else:
-                    if c == " ":
-                        chordlength -= 1
-                        while chordlength > 0:
-                            lyrline += " "
-                            chordlength -= 1
+                    if chordlength == 0:
+                        chordline += " "
                     else:
-                        chordlength -= 1
-                lyrline += c
+                        if c == " ":
+                            chordlength -= 1
+                            while chordlength > 0:
+                                lyrline += " "
+                                chordlength -= 1
+                        else:
+                            chordlength -= 1
+                    lyrline += c
+        else:
+            chordline = line.replace('[','').replace(']','')
 
         if line == '':
             parts_start_at.append(linecount)
@@ -262,7 +278,8 @@ with open(expanduser(args.file), "r") as textfile:
     title = match_after("(?<=^# ).*", text)
     artist = match_after("(?<=^## ).*", text)
     key = match_after("(?<=^### ).*", text)
-    
+    key_shift_symbol = '+'
+
     if "+" in key:
         key_shift = int(match_after(r"(?<=\+).*", key))
         key = Chord(key.split("+")[0].strip())
@@ -272,10 +289,15 @@ with open(expanduser(args.file), "r") as textfile:
     else:
         key = Chord(key)
     if args.transpose is not None:
-        key_shift = args.transpose
+        try:
+            key_shift = int(args.transpose)
+        except ValueError:
+            key_shift = key.distance(args.transpose)
     if not args.no_chords and key_shift != 0:
         key_str = str(key)
-        key = '{} + {} = {}'.format(key_str,key_shift,key.transpose(key_shift))
+        if key_shift < 0:
+            key_shift_symbol = '-'
+        key = '{} {} {} = {}'.format(key_str,key_shift_symbol,abs(key_shift),key.transpose(key_shift))
     else:
         key_shift = 0
         key = str(key)
@@ -288,9 +310,9 @@ with open(expanduser(args.file), "r") as textfile:
         return "[" + str(Chord(chord).transpose(key_shift)) + "]"
     if args.transpose is not None or args.transposed:
         if key_shift != 0:
-            body = re.sub(r"\[[a-zA-Z0-9#]+\]", trans, body)
+            body = re.sub(r"\[[a-zA-Z0-9#/]+\]", trans, body)
     elif args.no_chords:
-        body = re.sub(r"\[[a-zA-Z0-9#]+\]", "", body)
+        body = re.sub(r"\[[a-zA-Z0-9#/]+\]", "", body)
 
     if args.pdf:
         pdf(body,title,artist,key)
