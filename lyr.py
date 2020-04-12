@@ -3,8 +3,8 @@
 from lxml import html
 import argparse
 import requests
-from os.path import expanduser
-from os import remove,get_terminal_size
+import os.path
+import os
 import re
 
 import subprocess
@@ -74,7 +74,10 @@ key_group.add_argument("-T", "--transpose", help="shift in half tone steps or to
 parser.add_argument("-C", "--no-color", action="store_true", help="disable color output of chords")
 parser.add_argument("-s", "--sheet", action="store_true", help="only print the sheet")
 parser.add_argument("-p", "--pdf", action="store_true", help="instead of printing to stdout, create pdf file")
+parser.add_argument("-c", "--pdf-columns", type=int, choices=[1,2,3], default=2, help="define the number of columns in pdf mode, default: 2")
+parser.add_argument("-o", "--output-folder", default="./", help="if in pdf mode define the output folder, default is ./")
 parser.add_argument("-l", "--lyrics", action="store_true", help="only print the lyrics")
+parser.add_argument("-v", "--verbose", action="store_true", help="add verbosity")
 
 args = parser.parse_args()
 
@@ -102,6 +105,11 @@ def out(text):
         color[0] = "\033[1;35m"
         color[1] = "\033[0;0m"
 
+    if args.pdf:
+        color[0] = "\\textcolor{red}{"
+        color[1] = "}"
+        output += "\\begin{minipage}{\\linewidth}\n"
+        output += "\\begin{Verbatim}[commandchars=\\\\\\{\\}]\n"
     
     for line in text.splitlines():
         if not line.startswith('|'):
@@ -130,8 +138,15 @@ def out(text):
         else:
             chordline = line.replace('[','').replace(']','')
 
-        if line == '':
+        if line == '': # empty line, allow page break here
+            if args.pdf:
+                output += "\n"
+                output += "\\end{Verbatim}\n"
+                output += "\\end{minipage}\n"
+                output += "\\begin{minipage}{\\linewidth}\n"
+                output += "\\begin{Verbatim}[commandchars=\\\\\\{\\}]\n"
             parts_start_at.append(linecount)
+        
         if chordline.rstrip() != "" and not args.lyrics:
             output += color[0] + chordline + color[1] + "\n"
             linecount += 1
@@ -141,10 +156,14 @@ def out(text):
         chordline = ""
         lyrline = ""
         chordlength = 0
+    
+    if args.pdf:
+        output += "\\end{Verbatim}\n"
+        output += "\\end{minipage}\n"
 
     # wrap text if in terminal mode and more than $lines have to be printed
-    colwidth = int(get_terminal_size()[0]/2)
-    if linecount + 3 > get_terminal_size()[1] and not args.pdf:
+    colwidth = int(os.get_terminal_size()[0]/2)
+    if linecount + 3 > os.get_terminal_size()[1] and not args.pdf:
         # find the right spot to split into columns
         idx = linecount
         for part in parts_start_at:
@@ -211,12 +230,24 @@ def sheet(text):
             output += "{:{w1}s} | {:>{w2}s} | {}\n".format("","",x,w1=width1,w2=width2)
     return output
 
+def sanitize(string):
+    return string.replace("#","\\#").replace("&", "\\&")
+
 def pdf(body,title,artist,key):
-    tex = "\\documentclass[notitlepage,14pt]{extarticle}\n"
-    tex += "\\usepackage[a4paper,margin=0.8in]{geometry}\n"
+    artist = sanitize(artist)
+    title = sanitize(title)
+    key = sanitize(key)
+    landscape = ",landscape"
+    if args.pdf_columns == 1:
+        landscape = ""
+    tex = "\\documentclass[notitlepage,10pt" + landscape + "]{extarticle}\n"
+    tex += "\\usepackage[a4paper,margin=0.6in" + landscape + "]{geometry}\n"
     tex += "\\usepackage{fontspec}\n"
     tex += "\\usepackage{tabularx}\n"
     tex += "\\usepackage{array}\n"
+    tex += "\\usepackage{multicol}\n"
+    tex += "\\usepackage{xcolor}\n"
+    tex += "\\usepackage{fancyvrb}\n"
     tex += "\\setmainfont[Ligatures=TeX]{MuseJazzText}\n"
     tex += "\\newcommand\\textbox[2]{\\parbox{#1\\textwidth}{#2}}\n"
     tex += "\\newcolumntype{C}{>{\\centering\\arraybackslash}X}\n"
@@ -225,7 +256,7 @@ def pdf(body,title,artist,key):
     #tex += "\\textbox{.25}{\\hfill}\\textbox{.5}{\\Huge \\centering " + title + " \\Large (" + key + ")\\hfill} \\large \\textbox{.25}{\\hfill " + artist + "} \\large \n\n"
     tex += "\\begin{tabularx}{\\textwidth}{C r}\\Huge " + title + " \\Large (" + key + ") & \\large " + artist + "\\end{tabularx}\n\n"
     tex += "\\vspace{1em}\n"
-    print(tex)
+    #print(tex)
     tex += "\\renewcommand{\\arraystretch}{1.5}\n"
     tex += "\\setlength{\\extrarowheight}{1.5em}\n"
     tex += "\\begin{tabularx}{\\textwidth}{l r| l@{\\hspace{1em}}X}\n"
@@ -254,24 +285,50 @@ def pdf(body,title,artist,key):
     tex += "\\hline\n"
     tex += "\\end{tabularx}\n"
     tex += "\\renewcommand{\\arraystretch}{1}\n"
+    tex += "\\vspace{-1em}\n"
     if not args.sheet:
         #tex += "\\pagebreak\n"
-        tex += "\\normalsize\\begin{verbatim}\n"
+        if args.pdf_columns > 1:
+            tex += "\\begin{multicols}{" + str(args.pdf_columns) + "}\n"
+        tex += "\\normalsize"
         tex += out(lyrics)
-        tex += "\\end{verbatim}\n"
+        if args.pdf_columns > 1:
+            tex += "\\end{multicols}\n"
     tex += "\\end{document}\n"
-    basename = args.file.rsplit('.',1)[0]
-    with open("{}.tex".format(basename),'w') as texfile:
+    basename = os.path.abspath(args.file).rsplit('.',1)[0]
+    targetname = basename.rsplit('/',1)[1]
+
+    if args.output_folder != "./":
+        cwd = os.getcwd()
+        if not os.path.exists(args.output_folder):
+            q = input("The directory '{}' does not exist. Create? [Y/n] ".format(args.output_folder))
+            if q not in ["n", 'N']:
+                os.mkdir(args.output_folder,0o755)
+            else:
+                args.output_folder = cwd
+        os.chdir(args.output_folder)
+    # print(os.getcwd())
+    # print(basename)
+    targetname = os.path.join(os.getcwd(),targetname)
+    # print(targetname)
+    # input()
+    with open("{}.tex".format(targetname),'w') as texfile:
         texfile.write(tex)
     #remove("{}.pdf".format(basename))
-    o = subprocess.call("xelatex {}.tex".format(basename),shell=True)
+    if args.verbose:
+        o = subprocess.call("xelatex {}.tex".format(targetname),shell=True)
+    else:
+        o = subprocess.call("xelatex {}.tex".format(targetname),shell=True,stdout=subprocess.DEVNULL)
     if o != 0:
         return
     # cleanup
     for i in ["tex","aux","log"]:
-        remove("{}.{}".format(basename,i))
+        os.remove("{}.{}".format(targetname,i))
 
-with open(expanduser(args.file), "r") as textfile:
+    if args.output_folder != "./":
+        os.chdir(cwd)
+
+with open(os.path.expanduser(args.file), "r") as textfile:
     text = textfile.readlines()
     body = "".join(text[text.index("---\n")+1:])
     text = "".join(text[:text.index("---\n")])
