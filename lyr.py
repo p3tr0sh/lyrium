@@ -38,7 +38,10 @@ class Chord:
     def transpose(self, amount):
         if amount == 0:
             return self
-        idx = Chord.index(self.base)
+        try:
+            idx = self.index()
+        except ValueError:
+            return self
         if amount < 0:
             self.base = Chord.FLAT[(idx + amount) % 12]
             if '/' in self.addition:
@@ -51,16 +54,17 @@ class Chord:
                 self.addition = '{}/{}'.format(left,str(Chord(right).transpose(amount)))
         return self
 
-    def index(symbol):
-        return Chord.FLAT.index(symbol) if symbol in Chord.FLAT else Chord.SHARP.index(symbol)
+    def index(self):
+        return Chord.FLAT.index(self.base) if self.base in Chord.FLAT else Chord.SHARP.index(self.base)
     
     def __str__(self):
         s = self.base if self.third else self.base.lower()
         return s + self.addition
 
     def distance(self, symbol): # TODO: only upwards shift compatible
-        idx = Chord.index(self.base)
-        idx_symbol = Chord.index(symbol)
+        idx = self.index()
+        idx_symbol = Chord(symbol).index()
+        print(self.base, idx, symbol, idx_symbol)
         return (idx_symbol - idx) % 12
 
 key_shift = 0
@@ -189,8 +193,8 @@ def out(text):
             if color[0] in x:
                 offset = len(color[0]) + len(color[1])
             output_2 += "{:{wid}s}|  {}\n".format(x,y,wid=colwidth+offset)
-        return output_2
-    return output
+        return output_2[:-1]
+    return output[:-1]
 
 
 # sheet mode
@@ -231,7 +235,7 @@ def sheet(text):
     return output
 
 def sanitize(string):
-    return string.replace("#","\\#").replace("&", "\\&")
+    return string.replace("#","\\#").replace("&", "\\&").replace("'","{\\textquotesingle}")
 
 def pdf(body,title,artist,key):
     artist = sanitize(artist)
@@ -259,33 +263,39 @@ def pdf(body,title,artist,key):
     #print(tex)
     tex += "\\renewcommand{\\arraystretch}{1.5}\n"
     tex += "\\setlength{\\extrarowheight}{1.5em}\n"
-    tex += "\\begin{tabularx}{\\textwidth}{l r| l@{\\hspace{1em}}X}\n"
+    tex_sheet = "\\begin{tabularx}{\\textwidth}{l r| l@{\\hspace{1em}}X}\n"
+    contains_sheet = False
     lyrics = ""
     for line in body.splitlines():
         if len(line) == 0:
             lyrics += '\n'
             continue
         if line[0] == '>':
+            contains_sheet = True
             #tex += "\\\\[-1em] \\hline \\\\[-1em]\n"
-            tex += "\\hline\n\\large "
+            tex_sheet += "\\hline\n\\large "
             #tex += "\\\\[-.6em]\n"
             l = [*line[2:].replace('#',"\\#").replace('&','\\&').split(' ; '),'','']
             if "|" in l[2]:
                 l[2] = l[2].replace('[','').replace(']','').replace('  ','\\enspace\\enspace')
-                tex += "{} & {} & {} & {} \\\\".format(*l)
+                tex_sheet += "{} & {} & {} & {} \\\\".format(*l)
                 continue
             elif len(l) > 3 and "|" in l[3]: # chord progression in middle column
                 l[3] = l[3].replace('[','').replace(']','').replace('  ','\\enspace\\enspace')
                 # tex += "{0:} & {1:} & {3:} & {2:} \\\\".format(*l)
                 # continue
-            tex += "{0:} & {1:} & {3:} & {2:} \\\\".format(*l)
+            tex_sheet += "{0:} & {1:} & {3:} & {2:} \\\\".format(*l)
         else:
             lyrics += line + '\n'
 
-    tex += "\\hline\n"
-    tex += "\\end{tabularx}\n"
-    tex += "\\renewcommand{\\arraystretch}{1}\n"
-    tex += "\\vspace{-1em}\n"
+    tex_sheet += "\\hline\n"
+    tex_sheet += "\\end{tabularx}\n\\pagebreak\n"
+    tex_sheet += "\\renewcommand{\\arraystretch}{1}\n"
+    if contains_sheet:
+        tex += tex_sheet
+    else:
+        tex += "\\noindent\\rule{\\textwidth}{1pt}\n"
+        tex += "\\vspace{-2em}\n"
     if not args.sheet:
         #tex += "\\pagebreak\n"
         if args.pdf_columns > 1:
